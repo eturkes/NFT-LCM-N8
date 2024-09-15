@@ -19,3 +19,20 @@
 FROM rocker/rstudio:4.3.3
 
 LABEL org.opencontainers.image.authors="Emir Turkes emir.turkes@eturkes.com"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        zlib1g-dev \
+        libnetcdf19 \
+    && Rscript -e "install.packages('rmarkdown')" \
+        -e "install.packages('stringr')" \
+        -e "install.packages('conflicted')" \
+        -e "install.packages('plotly')" \
+        -e "install.packages('colorRamp2')" \
+        -e "install.packages('hexbin')" \
+        -e "install.packages('BiocManager')" \
+        -e "BiocManager::install('DEP')" \
+    && apt-get clean \
+    && rm -Rf /var/lib/apt/lists/ \
+        /tmp/downloaded_packages/ \
+        /tmp/*.rds
