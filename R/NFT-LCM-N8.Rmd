@@ -439,8 +439,8 @@ Pos_MAR <- rownames(Pos_data)[
 rm(Neg_data, Pos_data)
 MAR <- unique(append(Neg_MAR, Pos_MAR))
 
-Neg_MNAR_passQC <- Neg_MNAR[Neg_MNAR %in% Pos_MAR | Neg_MNAR %in% Pos_MNAR]
-Pos_MNAR_passQC <- Pos_MNAR[Pos_MNAR %in% Neg_MAR | Pos_MNAR %in% Neg_MNAR]
+Neg_MNAR_passQC <- Neg_MNAR[Neg_MNAR %in% Pos_MAR]
+Pos_MNAR_passQC <- Pos_MNAR[Pos_MNAR %in% Neg_MAR]
 
 MNAR <- unique(append(Neg_MNAR_passQC, Pos_MNAR_passQC))
 # --------------------------------------------------------------------------------------------------
@@ -704,7 +704,7 @@ test_diff_custom <- function(se, type = c("control", "all", "manual"),
   # Test for differential expression by empirical Bayes moderation
   # of a linear model on the predefined contrasts
   corr_fit <- duplicateCorrelation(raw, design, block = col_data$donor)
-  fit <- lmFit(raw, design, block = col_data$donor, cor = corr_fit$consensus)
+  fit <- lmFit(raw, design, block = col_data$donor, cor = corr_fit$consensus.correlation)
   made_contrasts <- makeContrasts(contrasts = cntrst, levels = design)
   contrast_fit <- contrasts.fit(fit, made_contrasts)
 
@@ -718,7 +718,7 @@ test_diff_custom <- function(se, type = c("control", "all", "manual"),
     }
   }
 
-  eB_fit <- eBayes(contrast_fit)
+  eB_fit <- eBayes(contrast_fit, trend = TRUE, robust = TRUE)
 
   # function to retrieve the results of
   # the differential expression test using 'fdrtool'
