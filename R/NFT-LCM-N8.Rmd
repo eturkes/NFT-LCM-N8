@@ -474,6 +474,7 @@ impute_vector <- rownames(impute2) %in% Pos_MNAR
 set.seed(1)
 impute2 <- impute(impute2, "mixed", randna = !impute_vector, mar = "knn", mnar = "MinProb")
 
+data <- data[ , match(c(colnames(impute1), colnames(impute2)), colnames(data))]
 assay(data, withDimnames = FALSE) <- cbind(assay(impute1), assay(impute2))
 
 plot_imputation(orig, data)
