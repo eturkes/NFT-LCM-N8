@@ -528,30 +528,27 @@ In order to account to technical replication, we include a custom version of the
 We also include a custom version of `datatable` from DT, which allows downloading of the data.
 
 ```{r}
-design <- model.matrix(~ 0 + data$condition + data$donor)
-colnames(design) <- make.names(colnames(design))
-cont_mat <- makeContrasts(
-  NFT_CTRL =
-    data.conditionPos -
-    data.conditionNeg,
-  levels = design
+assays(data) <- list(counts = assay(data))
+dge <- SE2DGEList(data)
+
+meta <- data.frame(tau = data$condition, donor = data$donor)
+rownames(meta) <- colnames(data)
+form <- ~ 0 + tau + (1 | donor)
+cont_mat <- makeContrastsDream(
+  form, data = meta, Pos_Neg = "tauPos - tauNeg",
 )
 
-fit <- lmFit(assay(data), design)
-fit <- contrasts.fit(fit, cont_mat)
-fit <- eBayes(fit, trend = TRUE, robust = TRUE)
-plotSA(fit)
-
-data_corrected <- removeBatchEffect(assay(data), batch = data$donor, group = data$condition)
-
-tests <- decideTests(fit, method = "global")
-tc <- textConnection("results", open = "w")
-write.fit(
-  fit, tests, file = tc,
-  adjust = "BH", F.adjust = "BH", method = "global"
+voom <- voomWithDreamWeights(
+  dge, formula = form, data = meta,
+  plot = TRUE, BPPARAM = MulticoreParam(availableCores())
 )
-close(tc)
-results <- read.delim(text = results)
+fit <- dream(
+  voom, formula = form, L = cont_mat,
+  data = meta, BPPARAM = MulticoreParam(availableCores())
+)
+fit <- variancePartition::eBayes(fit, robust = TRUE)
+
+results <- variancePartition::topTable(fit, coef = "Pos_Neg", number = Inf)
 ```
 
 # References
