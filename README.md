@@ -3,7 +3,7 @@
 
 ```
 This file is part of NFT-LCM-N8.
-Copyright (C) 2024  Emir Turkes, Martha Foiani, Claire Frodsham, UK
+Copyright (C) 2024-2025  Emir Turkes, Martha Foiani, Claire Frodsham, UK
 DRI at UCL
 
 This program is free software: you can redistribute it and/or modify
