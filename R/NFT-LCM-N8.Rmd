@@ -35,18 +35,28 @@ In this section, the raw data is read into R and manipulated as necessary to cre
 # Best way to load a bunch of packages without tons of messages being produced.
 # -----------------------------------------------------------------------------
 library(conflicted)
+conflicts_prefer(edgeR::cpm, .quiet = TRUE)
 packages <- c(
-  "DEP", "SummarizedExperiment", "plotly", "limma", "dplyr", "DT",
-  "ComplexHeatmap", "colorRamp2", "RColorBrewer", "tibble", "scales"
+  "DEP", "SummarizedExperiment", "plotly", "limma", "dplyr", "DT", "ComplexHeatmap", "colorRamp2",
+  "RColorBrewer", "tibble", "scales", "GSEABase", "Rcpp", "Matrix", "edgeR", "SingleCellExperiment",
+  "ProteoMM"
 )
 invisible(suppressPackageStartupMessages(lapply(packages, FUN = library, character.only = TRUE)))
 # -----------------------------------------------------------------------------
 
 `%notin%` <- Negate(`%in%`) # Add custom function.
 
+sourceCpp(file.path("..", "src", "calculateScores.cpp"))
+
 knitr::opts_chunk$set(dpi = 300, fig.width = 12, fig.height = 8) # Produce high-quality images with better sizes.
 
-data <- read.delim(file.path("..", "data", "report.pg_matrix.tsv")) # Read in data.
+data_dir <- file.path("..", "data")
+cache_dir <- file.path("..", "cache")
+if (!dir.exists(cache_dir)) {
+  dir.create(cache_dir, recursive = TRUE)
+}
+
+data <- read.delim(file.path(data_dir, "report.pg_matrix.tsv")) # Read in data.
 
 # Use some regex magic to tidy up sample names.
 # ---------------------------------------------
@@ -439,8 +449,8 @@ Pos_MAR <- rownames(Pos_data)[
 rm(Neg_data, Pos_data)
 MAR <- unique(append(Neg_MAR, Pos_MAR))
 
-Neg_MNAR_passQC <- Neg_MNAR[Neg_MNAR %in% Pos_MAR]
-Pos_MNAR_passQC <- Pos_MNAR[Pos_MNAR %in% Neg_MAR]
+Neg_MNAR_passQC <- Neg_MNAR[Neg_MNAR %in% Pos_MAR | Neg_MNAR %in% Pos_MNAR]
+Pos_MNAR_passQC <- Pos_MNAR[Pos_MNAR %in% Neg_MAR | Pos_MNAR %in% Neg_MNAR]
 
 MNAR <- unique(append(Neg_MNAR_passQC, Pos_MNAR_passQC))
 # --------------------------------------------------------------------------------------------------
@@ -454,7 +464,12 @@ data <- data[rownames(data) %in% keep, ]
 # Normalise data using a variance stabilising transformation (VSN).
 # -----------------------------------------------------------------
 orig <- data # Make a copy of the pre-normalised data for plotting later.
-data <- normalize_vsn(data)
+# data <- normalize_vsn(data)
+m_prot.info <- data.frame(a = paste('ID_',seq_len(nrow(data)), sep=""), b = paste('ID_',seq_len(nrow(data)), sep=""))
+hs_m_ints_eig1 = eig_norm1(m=assay(data),treatment=factor(data$condition),prot.info=m_prot.info)
+hs_m_ints_eig1$h.c = 3
+hs_m_ints_norm_1bt = eig_norm2(rv=hs_m_ints_eig1)
+assay(data, withDimnames = FALSE) <- as.matrix(hs_m_ints_norm_1bt$normalized[ , 3:ncol(hs_m_ints_norm_1bt$normalized)])
 meanSdPlot(data)
 plot_normalization(orig)
 plot_normalization(data)
@@ -522,6 +537,68 @@ ggplotly(
 # -----------------------------------------------------------
 ```
 
+# Gene Set Scoring
+
+```{r}
+gene_sets <- readRDS(file.path(data_dir, "gene_sets.rds"))
+gene_sets_keep <- readRDS(file.path(data_dir, "gene_sets_keep.rds"))
+gene_anno <- readRDS(file.path(data_dir, "gene_anno.rds"))
+
+data_ensembl <- assay(data)
+gene_anno_sub <- gene_anno[gene_anno$symbol %in% rownames(data_ensembl), ]
+data_ensembl <- data_ensembl[rownames(data_ensembl) %in% gene_anno_sub$symbol, ]
+gene_anno_sub <- gene_anno_sub[match(rownames(data_ensembl), gene_anno_sub$symbol), ]
+rownames(data_ensembl) <- gene_anno_sub$ensembl
+data_ensembl_orig <- data_ensembl
+
+# add <- unique(unlist(geneIds(gene_sets))[which(unlist(geneIds(gene_sets)) %notin% rownames(data_ensembl))])
+# # min <- mean(c(min(data_ensembl[ , 1:10]), min(data_ensembl[ , 11:20])))
+# null_mat <- matrix(0, length(add), ncol(data_ensembl))
+# rownames(null_mat) <- add
+# data_ensembl <- rbind(data_ensembl, null_mat)
+
+keep <- unique(unlist(geneIds(gene_sets)))[
+  unique(unlist(geneIds(gene_sets))) %in% rownames(data_ensembl)
+]
+# remove <- which(
+#   sapply(geneIds(gene_sets), FUN = function(x) any(x %in% remove))
+# )
+keep <- sapply(geneIds(gene_sets), FUN = function(x) sum(x %in% keep) / length(x))
+keep <- which(keep >= 0.5)
+gene_sets <- gene_sets[keep]
+
+keep <- unique(unlist(geneIds(gene_sets)))[
+  unique(unlist(geneIds(gene_sets))) %in% rownames(data_ensembl)
+]
+# remove <- which(
+#   sapply(geneIds(gene_sets), FUN = function(x) any(x %in% remove))
+# )
+keep <- sapply(geneIds(gene_sets), FUN = function(x) sum(x %in% keep))
+keep <- which(keep >= 2)
+gene_sets <- gene_sets[keep]
+
+gene_set_list <- geneIds(gene_sets)
+gene_set_list <- lapply(gene_set_list, function(x) x[x %in% rownames(data_ensembl)])
+
+dup <- sapply(
+  gene_set_list, FUN = function(x) paste(sort(x), collapse = "-")
+)
+dup <- which(duplicated(dup))
+gene_set_list <- gene_set_list[-dup]
+
+gene_sets <- gene_sets[names(gene_sets) %in% names(gene_set_list)]
+
+gene_sets
+
+data_ensembl_log <- data_ensembl_orig
+data_ensembl <- Matrix(2 ^ data_ensembl, sparse = TRUE)
+scores <- calculateScores(data_ensembl, rownames(data_ensembl), geneIds(gene_sets))
+rownames(scores) <- names(gene_sets)
+colnames(scores) <- colnames(data_ensembl)
+# scores <- pmax(scores, 0)
+scores_log <- log2(scores + 1)
+```
+
 # Differential Abundance
 
 We test for differential expression between tangle-positive and tangle-negative samples.
@@ -529,37 +606,103 @@ In order to account to technical replication, we include a custom version of the
 We also include a custom version of `datatable` from DT, which allows downloading of the data.
 
 ```{r}
-design <- model.matrix(~ 0 + data$condition)
+gse <- SingleCellExperiment(list(counts = scores, logcounts = scores_log))
+gse$tau <- factor(ifelse(data$condition == "Neg", yes = "CTRL", no = "NFT"))
+gse$donor <- data$donor
+gse$tau_donor <- factor(paste(gse$tau, gse$donor, sep = "_"))
+gse <- gse[rownames(gse) %in% names(gene_sets_keep), ]
+
+dge <- DGEList(counts(gse))
+keep <- filterByExpr(
+  dge, gse$tau,
+  min.count = 10, min.total.count = 15
+)
+gse <- gse[keep, ]
+
+design <- model.matrix(~ 0 + gse$tau)
 colnames(design) <- make.names(colnames(design))
 cont_mat <- makeContrasts(
   NFT_CTRL =
-    data.conditionPos -
-    data.conditionNeg,
+    gse.tauNFT -
+    gse.tauCTRL,
   levels = design
 )
 
-corr <- duplicateCorrelation(assay(data), design, block = data$donor)
+corr <- duplicateCorrelation(logcounts(gse), design, block = gse$donor)
 fit <- lmFit(
-  assay(data), design,
-  correlation = corr$consensus.correlation, block = data$donor
+  logcounts(gse), design,
+  correlation = corr$consensus.correlation, block = gse$donor
 )
 fit <- contrasts.fit(fit, cont_mat)
 fit <- eBayes(fit, trend = TRUE, robust = TRUE)
 plotSA(fit)
 
-data_corrected <- removeBatchEffect(
-  assay(data), group = data$condition,
-  correlation = corr$consensus.correlation, block = data$donor
-)
-
-tests <- decideTests(fit, method = "global")
+tests <- decideTests(fit)
 tc <- textConnection("results", open = "w")
-write.fit(
-  fit, tests, file = tc,
-  adjust = "BH", F.adjust = "BH", method = "global"
-)
+write.fit(fit, tests, file = tc, adjust = "BH")
 close(tc)
-results <- read.delim(text = results)
+results_gse <- read.delim(text = results)
+
+rownames(results_gse) <- results_gse$X
+results_gse <- results_gse[ , 2:6]
+results_gse$GeneSet <- rownames(results_gse)
+results_gse <- results_gse[order(results_gse$P.value), ]
+
+deg <- SingleCellExperiment(list(counts = data_ensembl_orig, logcounts = data_ensembl_log))
+deg$tau <- ifelse(data$condition == "Neg", yes = "CTRL", no = "NFT")
+deg$donor <- data$donor
+
+gene_sets_sub <- gene_sets[names(gene_sets) %in% rownames(gse)]
+gene_sets_sub <- unique(unlist(geneIds(gene_sets_sub)))
+deg <- deg[rownames(deg) %in% gene_sets_sub, ]
+
+corr <- duplicateCorrelation(logcounts(deg), design, block = deg$donor)
+fit <- lmFit(
+  logcounts(deg), design,
+  correlation = corr$consensus.correlation, block = deg$donor
+)
+fit <- contrasts.fit(fit, cont_mat)
+fit <- eBayes(fit, trend = TRUE, robust = TRUE)
+plotSA(fit)
+
+tests <- decideTests(fit)
+tc <- textConnection("results", open = "w")
+write.fit(fit, tests, file = tc, adjust = "BH")
+close(tc)
+results_deg <- read.delim(text = results)
+
+rownames(results_deg) <- results_deg$X
+results_deg <- results_deg[ , 2:6]
+gene_anno_sub <- gene_anno[gene_anno$ensembl %in% rownames(results_deg), ]
+gene_anno_sub <- gene_anno_sub[match(rownames(results_deg), gene_anno_sub$ensembl), ]
+results_deg$Gene <- gene_anno_sub$symbol
+results_deg <- results_deg[ , c(ncol(results_deg), 1:(ncol(results_deg) - 1))]
+results_deg <- results_deg[order(results_deg$P.value), ]
+
+meta <- data.frame(donor = gse$donor, tau = gse$tau)
+gse <- removeBatchEffect(logcounts(gse), batch = gse$donor, group = gse$tau)
+deg <- removeBatchEffect(logcounts(deg), batch = deg$donor, group = deg$tau)
+
+rds <- file.path(cache_dir, "meta.rds")
+if (!file.exists(rds)) {
+  saveRDS(meta, file = rds)
+}
+rds <- file.path(cache_dir, "gse.rds")
+if (!file.exists(rds)) {
+  saveRDS(gse, file = rds)
+}
+rds <- file.path(cache_dir, "deg.rds")
+if (!file.exists(rds)) {
+  saveRDS(deg, file = rds)
+}
+rds <- file.path(cache_dir, "res_gse.rds")
+if (!file.exists(rds)) {
+  saveRDS(results_gse, file = rds)
+}
+rds <- file.path(cache_dir, "res_deg.rds")
+if (!file.exists(rds)) {
+  saveRDS(results_deg, file = rds)
+}
 ```
 
 # References
