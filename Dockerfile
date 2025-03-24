@@ -30,8 +30,10 @@ RUN apt-get update \
         -e "install.packages('plotly')" \
         -e "install.packages('colorRamp2')" \
         -e "install.packages('hexbin')" \
+        -e "install.packages('ProteoMM')" \
         -e "install.packages('BiocManager')" \
         -e "BiocManager::install('DEP')" \
+        -e "BiocManager::install('GSEABase')" \
     && apt-get clean \
     && rm -Rf /var/lib/apt/lists/ \
         /tmp/downloaded_packages/ \
